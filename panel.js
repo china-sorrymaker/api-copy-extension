@@ -161,27 +161,21 @@ function loadResponse(r,req){
   if(selectedId===r.id&&!hasActiveSelection())render();
  })}catch(e){r.loading=false;r.responseError=String(e.message||e);}
 }
+let renderedTree=null;
 function renderTree(r){
- const tree=$('outputTree'),out=$('output');tree.replaceChildren();
- if(!r.responseLoaded){tree.hidden=true;out.hidden=false;out.textContent=r.responseError||'（响应暂不可读，可点击「重试读取响应」）';return;}
- let obj;try{obj=JSON.parse(r.responseText)}catch{tree.hidden=true;out.hidden=false;return;}
- if(!obj || typeof obj!=='object'){tree.hidden=true;out.hidden=false;return;}
+ const tree=$('outputTree'),out=$('output');
+ if(!r.responseLoaded){renderedTree=null;tree.hidden=true;out.hidden=false;out.textContent=r.responseError||'（响应暂不可读，可点击「重试读取响应」）';return;}
+ // 新请求到来会刷新列表；已选响应没变化时保留 DOM，避免折叠、选中和滚动位置丢失。
+ if(renderedTree?.id===r.id&&renderedTree.text===r.responseText){tree.hidden=false;out.hidden=true;return;}
+ let obj;try{obj=JSON.parse(r.responseText)}catch{renderedTree=null;tree.hidden=true;out.hidden=false;return;}
+ if(!obj || typeof obj!=='object'){renderedTree=null;tree.hidden=true;out.hidden=false;return;}
  tree.hidden=false;out.hidden=true;
- function add(parent,value,key,depth){
-  if(depth>20){const node=document.createElement('div');node.textContent=key+': [深层数据省略]';parent.append(node);return;}
-  const name=key===null?'':key+': ';
-  if(value&&typeof value==='object'){
-   const details=document.createElement('details');details.open=depth<2;
-   const summary=document.createElement('summary');summary.textContent=name+(Array.isArray(value)?`Array(${value.length})`:`Object(${Object.keys(value).length})`);
-   details.append(summary);parent.append(details);
-   const entries=Object.entries(value);for(const [k,v] of entries) add(details,v,k,depth+1);
-  }else{const leaf=document.createElement('div');leaf.className='json-leaf';
-   leaf.textContent=name+JSON.stringify(value);parent.append(leaf);}
- }
- add(tree,APIFormat.clean(obj),null,0);
+ if(!r.treeState||r.treeState.text!==r.responseText)r.treeState={text:r.responseText,expanded:new Map(),scrollTop:0};
+ const controls=APIJSONTree.render(tree,APIFormat.clean(obj),r.treeState);
+ renderedTree={id:r.id,text:r.responseText,...controls};
 }
-$('expandJson').addEventListener('click',()=>document.querySelectorAll('#outputTree details').forEach(el=>el.open=true));
-$('collapseJson').addEventListener('click',()=>document.querySelectorAll('#outputTree details').forEach(el=>el.open=false));
+$('expandJson').addEventListener('click',()=>renderedTree?.expandAll());
+$('collapseJson').addEventListener('click',()=>renderedTree?.collapseAll());
 $('retryResponse').addEventListener('click',()=>{const r=getRecord();if(r){r.responseError='';loadResponse(r,r.source);}});
 const maskDefaults={prefix:4,suffix:4,mask:8,maskedHeaders:''};let savedMask=maskDefaults;
 try{savedMask={...maskDefaults,...JSON.parse(localStorage.getItem('api-copy-mask-config')||'{}')}}catch{}

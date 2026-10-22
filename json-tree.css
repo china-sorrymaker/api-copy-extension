@@ -1,0 +1,19 @@
+/* 紧凑的单行摘要与类型配色，长内容在树内横向滚动。 */
+.json-tree{padding:8px 10px;font:12px/20px Consolas,'SFMono-Regular',monospace;color:#273244;overflow:auto}
+.json-tree .json-node{margin:0}
+.json-tree .json-row{display:block;position:relative;width:max-content;min-width:100%;min-height:20px;padding-left:14px;border-radius:0;white-space:pre;line-height:20px;outline-offset:-2px}
+.json-tree .json-row::-webkit-details-marker{display:none}
+.json-tree .json-row::before{content:'';position:absolute;top:7px;left:3px;border-top:3px solid transparent;border-bottom:3px solid transparent;border-left:5px solid #687486;transform-origin:2px 3px}
+.json-tree .json-node[open]>.json-row::before{transform:rotate(90deg)}
+.json-tree .json-row:hover{background:#f0f3f8}
+.json-tree .json-row:focus-visible{outline:1px solid #91b6f6;background:#edf3ff}
+.json-tree .json-children{padding-left:14px}
+.json-tree .json-leaf{width:max-content;min-width:100%;min-height:20px;margin:0;padding-left:14px;white-space:pre;line-height:20px}
+.json-tree .json-leaf:hover{background:#f8fafc}
+.json-tree .json-key{color:#7b367f}
+.json-tree .json-string{color:#b43d3d}
+.json-tree .json-number{color:#185bc6}
+.json-tree .json-boolean{color:#7352a5}
+.json-tree .json-null{color:#8a919e}
+.json-tree .json-punctuation{color:#48546a}
+.json-tree .json-length{color:#6c778a}

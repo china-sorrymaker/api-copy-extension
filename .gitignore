@@ -1,0 +1,4 @@
+node_modules/
+.qa/
+*.zip
+.DS_Store

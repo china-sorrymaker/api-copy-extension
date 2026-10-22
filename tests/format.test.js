@@ -124,7 +124,7 @@ test('面板兼容旧明文配置，保存脱敏名单并重开后，各复制�
    document:{getElementById:node,querySelector:node,createElement:()=>new Element(),createDocumentFragment:()=>new Element(),addEventListener(){}},
    chrome:{runtime:{},devtools:{network:{getHAR:callback=>callback({entries:[]}),onRequestFinished:{addListener:callback=>{finished=callback}}}}}
   });
-  for(const name of ['format.js','panel.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',name),'utf8'),context);
+  for(const name of ['format.js','json-tree.js','panel.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',name),'utf8'),context);
   return {node,receive:entry=>finished(entry),copied:()=>copied};
  }
  let panel=openPanel();
