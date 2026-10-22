@@ -24,13 +24,31 @@ function isApi(entry) {
   const reqMime = String(entry.request?.postData?.mimeType || '').toLowerCase();
   return /(json|graphql|xml|event-stream)/.test(mime) || /(json|graphql)/.test(accept) || /(json|x-www-form-urlencoded|multipart\/form-data)/.test(reqMime);
 }
-function signature(e) { return [e.startedDateTime || '',e.request?.method || '',e.request?.url || '',e.response?.status ?? ''].join('\u001f'); }
+// 状态码属于请求的可变状态，不能参与身份标识，否则 waiting → 200 会产生重复记录。
+function signature(e) { return [e.startedDateTime || '',e.request?.method || '',e.request?.url || ''].join('\u001f'); }
 const suppressed=new Set();
 let reconcileRunning=false;
 let initialized=false;
-function makeRecord(har) {
+function makeRecord(har,finished=false) {
+ const r={id:++serial,har,responseText:'',responseLoaded:false,contentType:'',missing:0,source:har,responseError:'',loading:false,finished:false};
+ updateRecord(r,har,finished);return r;
+}
+function updateRecord(r,har,finished=false){
+ // HAR 回调可能晚于完成事件返回，不允许旧的 waiting 快照覆盖已确认的结果。
+ if(r.finished&&!finished&&APIFormat.waiting({har}))return false;
+ const previous=r.har;
+ let changed=previous.response?.status!==har.response?.status||previous.time!==har.time||previous.request?.postData?.text!==har.request?.postData?.text||previous.response?._error!==har.response?._error;
+ r.har=har;
+ if(typeof har.getContent==='function'||typeof r.source?.getContent!=='function')r.source=har;
+ const complete=finished||r.finished||!APIFormat.waiting({har});
+ if(r.finished!==complete){r.finished=complete;changed=true;}
+ const mime=har.response?.content?.mimeType||'';
+ if(mime!==r.contentType){r.contentType=mime;changed=true;}
  const text=har.response?.content?.text;
- return {id:++serial,har,responseText:typeof text==='string'?text:'',responseLoaded:typeof text==='string',contentType:har.response?.content?.mimeType||'',missing:0,source:har,responseError:'',loading:false};
+ if(!APIFormat.waiting(r)&&typeof text==='string'&&(!r.responseLoaded||r.responseText!==text)){
+  r.responseText=text;r.responseLoaded=true;r.responseError='';changed=true;
+ }
+ return changed;
 }
 
 function hasActiveSelection() {
@@ -67,19 +85,22 @@ function reconcile() {
   reconcileRunning=false;
   if(chrome.runtime.lastError || !log?.entries) return;
   const entries=log.entries.filter(isApi);
-  for(const r of records){if(!r.responseLoaded && !r.loading){const matched=entries.find(e=>signature(e)===signature(r.har)&&typeof e.getContent==='function');if(matched)loadResponse(r,matched);}}
   const live=new Map();
   for(const e of entries) live.set(signature(e),(live.get(signature(e))||0)+1);
   for(const sig of [...suppressed]) if(!live.has(sig)) suppressed.delete(sig);
   // 从 HAR 中恢复当前请求，不依赖面板是否在请求开始时打开。
+  const existing=new Map();
+  for(const r of records){const key=signature(r.har);if(!existing.has(key))existing.set(key,[]);existing.get(key).push(r);}
   const represented=new Map();
-  for(const r of records) represented.set(signature(r.har),(represented.get(signature(r.har))||0)+1);
   let changed=false;
   for(const e of entries){
    const key=signature(e);const n=represented.get(key)||0;
-   const total=live.get(key)||0;
-   if(n>=total || suppressed.has(key)) continue;
-   const r=makeRecord(e);records.push(r);if(typeof e.getContent==='function')loadResponse(r,e);represented.set(key,n+1);changed=true;
+   if(suppressed.has(key))continue;
+   let r=existing.get(key)?.[n];
+   if(r){if(updateRecord(r,e))changed=true;}
+   else{r=makeRecord(e);records.push(r);changed=true;}
+   represented.set(key,n+1);
+   if(!r.responseLoaded&&!r.loading)loadResponse(r,r.source);
   }
   for(let i=records.length-1;i>=0;i--){
    const r=records[i],sig=signature(r.har);
@@ -106,7 +127,7 @@ function showFeedback(message,error=false){
  feedbackTimer=setTimeout(()=>{$('feedback').textContent=''},3000);
 }
 async function copyText(value){try{await navigator.clipboard.writeText(value);showFeedback('✓ 已复制到剪贴板')}catch(e){showFeedback(`复制失败：${e.message}`,true)}}
-function render(){const filter=$('filter').value.toLowerCase().trim(),bad=$('failedOnly').checked;const match=records.filter(r=>(!bad||APIFormat.anomalous(r))&&(!filter||`${r.har.request.method} ${r.har.request.url} ${r.har.response.status}`.toLowerCase().includes(filter)));$('count').textContent=`已捕获 ${records.length} 条 · 显示 ${match.length} 条`;
+function render(){const filter=$('filter').value.toLowerCase().trim(),bad=$('failedOnly').checked;const match=records.filter(r=>(!bad||APIFormat.anomalous(r))&&(!filter||`${r.har.request.method} ${r.har.request.url} ${APIFormat.status(r)}`.toLowerCase().includes(filter)));$('count').textContent=`已捕获 ${records.length} 条 · 显示 ${match.length} 条`;
  const frag=document.createDocumentFragment();
  for(const r of [...match].reverse()){
   const row=document.createElement('div');row.className='request-row'+(r.id===selectedId?' active':'');
@@ -124,7 +145,8 @@ function render(){const filter=$('filter').value.toLowerCase().trim(),bad=$('fai
    pathBox.append(pFull);
   }
 
-  const st=document.createElement('span');st.className='code '+(APIFormat.anomalous(r)?'error':'ok');st.textContent=String(r.har.response.status||'ERR')+(APIFormat.businessError(r)?' !':'');
+  const st=document.createElement('span');st.className='code '+(APIFormat.waiting(r)?'waiting':APIFormat.anomalous(r)?'error':'ok');st.textContent=APIFormat.status(r)+(APIFormat.businessError(r)?' !':'');
+  st.title=APIFormat.waiting(r)?'请求进行中，等待响应':String(r.har.response?._error||r.har._error||'');
   line.append(m,pathBox,st);item.append(line);
   item.addEventListener('click',()=>{
    // 如果用户是在划选复制 URL 文字，松开鼠标时不触发列表重绘，避免选中态丢失
@@ -141,11 +163,12 @@ function render(){const filter=$('filter').value.toLowerCase().trim(),bad=$('fai
  $('requests').replaceChildren(frag);
  const r=getRecord();$('placeholder').hidden=Boolean(r);$('selected').hidden=!r;if(!r)return;
  $('method').textContent=r.har.request.method;$('url').textContent=APIFormat.url(r.har.request.url);
- $('status').textContent=r.har.response.status||'ERR';$('status').className='status-pill '+(APIFormat.anomalous(r)?'error':'ok');
- $('timing').textContent=Math.round(r.har.time||0)+' ms';
+ $('status').textContent=APIFormat.status(r);$('status').className='status-pill '+(APIFormat.waiting(r)?'waiting':APIFormat.anomalous(r)?'error':'ok');
+ $('status').title=APIFormat.waiting(r)?'请求进行中，等待响应':String(r.har.response?._error||r.har._error||'');
+ $('timing').textContent=APIFormat.waiting(r)?'等待响应':Math.round(r.har.time||0)+' ms';
  $('input').textContent=formatInput(r);$('output').textContent=formatOutput(r);renderTree(r);}
 function loadResponse(r,req){
- if(!req || typeof req.getContent!=='function'||r.loading)return;
+ if(!req || typeof req.getContent!=='function'||r.loading||APIFormat.waiting(r))return;
  r.loading=true;r.responseError='';
  try{req.getContent((body,encoding)=>{
   r.loading=false;
@@ -164,6 +187,7 @@ function loadResponse(r,req){
 let renderedTree=null;
 function renderTree(r){
  const tree=$('outputTree'),out=$('output');
+ if(APIFormat.waiting(r)){renderedTree=null;tree.hidden=true;out.hidden=false;out.textContent='请求进行中，等待响应…';return;}
  if(!r.responseLoaded){renderedTree=null;tree.hidden=true;out.hidden=false;out.textContent=r.responseError||'（响应暂不可读，可点击「重试读取响应」）';return;}
  // 新请求到来会刷新列表；已选响应没变化时保留 DOM，避免折叠、选中和滚动位置丢失。
  if(renderedTree?.id===r.id&&renderedTree.text===r.responseText){tree.hidden=false;out.hidden=true;return;}
@@ -194,9 +218,10 @@ updateMaskPreview();
 chrome.devtools.network.onRequestFinished.addListener(har=>{
  if(!isApi(har) || suppressed.has(signature(har))) return;
  const sig=signature(har);
- let r=records.find(x=>signature(x.har)===sig);
- if(!r){r=makeRecord(har);records.push(r);if(records.length>MAX)records.shift();}
- else {r.har=har;r.source=har;}
+ const matches=records.filter(x=>signature(x.har)===sig);
+ let r=matches.find(x=>!x.finished)||matches[0];
+ if(!r){r=makeRecord(har,true);records.push(r);if(records.length>MAX)records.shift();}
+ else updateRecord(r,har,true);
  if(!hasActiveSelection()) render();
  loadResponse(r,har);
 });

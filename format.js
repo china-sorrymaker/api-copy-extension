@@ -98,8 +98,11 @@ const APIFormat=(()=>{
    return key+': '+safeString(v);
   }).join('\n');
  }
- const response=r=>r.responseLoaded?display(r.responseText,r.contentType):'(响应暂不可读)';
- const heading=r=>`【接口】\n${r.har.request.method} ${url(r.har.request.url)}\nHTTP 状态：${r.har.response.status}\n耗时：${Math.round(r.har.time||0)} ms`;
+ // status=0 既可能是尚未收到响应，也可能是网络失败；只有明确失败或完成事件才能判错。
+ function waiting(r){return !r.finished&&!r.har.response?._error&&!r.har._error&&!(Number(r.har.response?.status)>0)}
+ const status=r=>waiting(r)?'waiting':Number(r.har.response?.status)>0?String(r.har.response.status):'ERR';
+ const response=r=>waiting(r)?'(请求进行中，等待响应)':r.responseLoaded?display(r.responseText,r.contentType):'(响应暂不可读)';
+ const heading=r=>`【接口】\n${r.har.request.method} ${url(r.har.request.url)}\nHTTP 状态：${status(r)}\n耗时：${waiting(r)?'等待响应':Math.round(r.har.time||0)+' ms'}`;
  const full=r=>`${heading(r)}\n\n【入参】\n${input(r.har)}\n\n【请求头（已脱敏）】\n${headers(r.har)}\n\n【返回值】\n${response(r)}`;
  const MAX_SAMPLE=2;
  function prune(value,depth=0){
@@ -115,6 +118,7 @@ const APIFormat=(()=>{
   return value;
  }
  function responseSummary(r){
+  if(waiting(r))return '(请求进行中，等待响应)';
   if(!r.responseLoaded)return '(响应暂不可读)';
   if(!r.responseText)return '(空)';
   const obj=parse(r.responseText);
@@ -122,15 +126,15 @@ const APIFormat=(()=>{
   const txt=safeString(r.responseText);return txt.length>900?txt.slice(0,900)+`\n…（省略 ${txt.length-900} 字符）`:txt;
  }
  function businessError(r){
-  if(!r.responseLoaded)return false;
+  if(waiting(r)||!r.responseLoaded)return false;
   const obj=parse(r.responseText);
   if(!obj||typeof obj!=='object'||Array.isArray(obj))return false;
   if(obj.success===false)return true;
   if('code' in obj){const c=String(obj.code);return !['0','200','20000','SUCCESS','success'].includes(c)}
   return false;
  }
- function anomalous(r){return r.har.response.status>=400||r.har.response.status===0||businessError(r)}
+ function anomalous(r){return !waiting(r)&&(Boolean(r.har.response?._error||r.har._error)||Number(r.har.response?.status)>=400||!(Number(r.har.response?.status)>0)||businessError(r))}
  function compact(r){return `${heading(r)}\n\n【入参】\n${input(r.har)}\n\n【请求头（已脱敏）】\n${headers(r.har)}\n\n【返回摘要】（数组只展示前 ${MAX_SAMPLE} 条）\n${responseSummary(r)}`}
- return {clean,url,uri,display,input,copyInput,response,full,compact,anomalous,businessError,responseSummary,headers,maskToken};
+ return {clean,url,uri,display,input,copyInput,response,full,compact,waiting,status,anomalous,businessError,responseSummary,headers,maskToken};
 })();
 if(typeof module!=='undefined')module.exports=APIFormat;

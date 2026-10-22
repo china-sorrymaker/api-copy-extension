@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "API Copy - 接口调试复制助手",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "API 请求一键复制，响应正文恢复、JSON 折叠树及请求头可配置脱敏",
   "devtools_page": "devtools.html",
   "permissions": [
